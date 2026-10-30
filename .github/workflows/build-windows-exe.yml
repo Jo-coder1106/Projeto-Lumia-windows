@@ -5,7 +5,6 @@ on:
   push:
     paths:
       - 'lumia-java-source.zip'
-      - '.github/workflows/build-windows-exe.yml'
 
 permissions:
   contents: read
@@ -27,30 +26,42 @@ jobs:
         shell: pwsh
         run: |
           if (!(Test-Path "lumia-java-source.zip")) {
-            throw "Arquivo lumia-java-source.zip não encontrado na raiz do repositório."
+            throw "Envie o arquivo lumia-java-source.zip para a raiz do repositório."
           }
           Expand-Archive -Path "lumia-java-source.zip" -DestinationPath "$env:RUNNER_TEMP\lumia-src" -Force
           $project = Get-ChildItem "$env:RUNNER_TEMP\lumia-src" -Directory -Recurse |
-            Where-Object { Test-Path (Join-Path $_.FullName "src\br\com\lumia\Server.java") } |
+            Where-Object { (Test-Path (Join-Path $_.FullName "src\br\com\lumia\Server.java")) -and (Test-Path (Join-Path $_.FullName "lumia-desktop.jar")) } |
             Select-Object -First 1
-          if (!$project) { throw "Não encontrei src\br\com\lumia\Server.java dentro do ZIP." }
+          if (!$project) { throw "O ZIP precisa conter a pasta lumia-java com src\br\com\lumia\Server.java e lumia-desktop.jar." }
           "LUMIA_PROJECT=$($project.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Compile launcher and package
+      - name: Compile Windows launcher and create self-contained installer
         shell: pwsh
         run: |
           $p = $env:LUMIA_PROJECT
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\lumia-package\lib" | Out-Null
-          Copy-Item "$p\lumia-desktop.jar" "$env:RUNNER_TEMP\lumia-package\"
-          Copy-Item "$p\lumia-servidor.jar" "$env:RUNNER_TEMP\lumia-package\"
-          Copy-Item "$p\lib\*.jar" "$env:RUNNER_TEMP\lumia-package\lib\"
+          $pkg = "$env:RUNNER_TEMP\lumia-package"
+          $classes = "$env:RUNNER_TEMP\lumia-launcher-classes"
+          New-Item -ItemType Directory -Force -Path "$pkg\lib", $classes | Out-Null
+          Copy-Item "$p\lumia-desktop.jar" "$pkg\"
+          Copy-Item "$p\lumia-servidor.jar" "$pkg\"
+          Copy-Item "$p\lib\*.jar" "$pkg\lib\"
           @'
           package br.com.lumia;
           import java.net.HttpURLConnection;
           import java.net.URL;
+          import java.nio.file.Files;
+          import java.nio.file.Path;
           import javax.swing.JOptionPane;
           public final class Launcher {
               public static void main(String[] args) {
+                  try {
+                      Path data = Path.of(System.getProperty("user.home"), "AppData", "Local", "LumIA");
+                      Files.createDirectories(data);
+                      System.setProperty("user.dir", data.toString());
+                  } catch (Exception e) {
+                      JOptionPane.showMessageDialog(null, "Não foi possível preparar a pasta de dados do LumIA: " + e.getMessage(), "LumIA", JOptionPane.ERROR_MESSAGE);
+                      System.exit(1);
+                  }
                   Thread server = new Thread(() -> {
                       try { Server.main(new String[]{"--demo"}); }
                       catch (Exception e) { e.printStackTrace(); }
@@ -68,20 +79,29 @@ jobs:
                           ready = true;
                           break;
                       } catch (Exception ignored) {
-                          try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                          try { Thread.sleep(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
                       }
                   }
                   if (!ready) {
-                      JOptionPane.showMessageDialog(null, "O servidor local do LumIA não iniciou. Consulte os logs.", "LumIA", JOptionPane.ERROR_MESSAGE);
+                      JOptionPane.showMessageDialog(null, "O servidor local do LumIA não iniciou. Verifique se a porta 8080 está livre.", "LumIA", JOptionPane.ERROR_MESSAGE);
                       System.exit(1);
                   }
                   Desktop.main(new String[0]);
               }
           }
           '@ | Set-Content -Encoding UTF8 "$env:RUNNER_TEMP\Launcher.java"
-          javac --release 17 -encoding UTF-8 -cp "$env:RUNNER_TEMP\lumia-package\lumia-desktop.jar;$env:RUNNER_TEMP\lumia-package\lumia-servidor.jar;$env:RUNNER_TEMP\lumia-package\lib\*" -d "$env:RUNNER_TEMP\lumia-package" "$env:RUNNER_TEMP\Launcher.java"
+          $cp = "$pkg\lumia-desktop.jar;$pkg\lumia-servidor.jar;$pkg\lib\*"
+          javac --release 17 -encoding UTF-8 -cp $cp -d $classes "$env:RUNNER_TEMP\Launcher.java"
           if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar o inicializador." }
-          jpackage --type exe --name LumIA --app-version 0.6.1 --vendor "Projeto LumIA" --input "$env:RUNNER_TEMP\lumia-package" --main-jar lumia-desktop.jar --main-class br.com.lumia.Launcher --dest dist --win-menu --win-shortcut --win-dir-chooser --java-options "-Dfile.encoding=UTF-8"
+          @"
+          Manifest-Version: 1.0
+          Main-Class: br.com.lumia.Launcher
+          Class-Path: lumia-desktop.jar lumia-servidor.jar lib/gson-2.11.0.jar lib/mariadb-java-client-3.5.3.jar lib/h2-2.3.232.jar
+
+          "@ | Set-Content -Encoding ASCII "$env:RUNNER_TEMP\launcher-manifest.mf"
+          jar --create --file "$pkg\lumia-launcher.jar" --manifest "$env:RUNNER_TEMP\launcher-manifest.mf" -C $classes .
+          if ($LASTEXITCODE -ne 0) { throw "Falha ao empacotar o inicializador." }
+          jpackage --type exe --name LumIA --app-version 0.6.1 --vendor "Projeto LumIA" --input $pkg --main-jar lumia-launcher.jar --main-class br.com.lumia.Launcher --dest dist --win-menu --win-shortcut --win-dir-chooser --java-options "-Dfile.encoding=UTF-8"
           if ($LASTEXITCODE -ne 0) { throw "jpackage falhou ao gerar o instalador." }
 
       - name: Upload installer
