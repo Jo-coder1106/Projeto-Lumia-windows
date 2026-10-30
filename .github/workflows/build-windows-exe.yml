@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'lumia-java-source.zip'
+      - '.github/workflows/build-windows-exe.yml'
 
 permissions:
   contents: read
