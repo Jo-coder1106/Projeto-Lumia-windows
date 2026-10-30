@@ -35,7 +35,7 @@ jobs:
           if (!$project) { throw "O ZIP precisa conter a pasta lumia-java com src\br\com\lumia\Server.java e lumia-desktop.jar." }
           "LUMIA_PROJECT=$($project.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Compile Windows launcher and create self-contained installer
+      - name: Compile Windows launcher and create portable app
         shell: pwsh
         run: |
           $p = $env:LUMIA_PROJECT
@@ -101,13 +101,14 @@ jobs:
           "@ | Set-Content -Encoding ASCII "$env:RUNNER_TEMP\launcher-manifest.mf"
           jar --create --file "$pkg\lumia-launcher.jar" --manifest "$env:RUNNER_TEMP\launcher-manifest.mf" -C $classes .
           if ($LASTEXITCODE -ne 0) { throw "Falha ao empacotar o inicializador." }
-          jpackage --type exe --name LumIA --app-version 0.6.1 --vendor "Projeto LumIA" --input $pkg --main-jar lumia-launcher.jar --main-class br.com.lumia.Launcher --dest dist --win-menu --win-shortcut --win-dir-chooser --java-options "-Dfile.encoding=UTF-8"
-          if ($LASTEXITCODE -ne 0) { throw "jpackage falhou ao gerar o instalador." }
+          jpackage --type app-image --name LumIA --app-version 0.6.1 --vendor "Projeto LumIA" --input $pkg --main-jar lumia-launcher.jar --main-class br.com.lumia.Launcher --dest dist --java-options "-Dfile.encoding=UTF-8"
+          if ($LASTEXITCODE -ne 0) { throw "jpackage falhou ao gerar a versão portátil." }
+          Compress-Archive -Path "dist\LumIA\*" -DestinationPath "dist\LumIA-Portatil.zip" -Force
 
-      - name: Upload installer
+      - name: Upload portable app
         uses: actions/upload-artifact@v4
         with:
-          name: LumIA-Windows-Installer
-          path: dist/*.exe
+          name: LumIA-Windows-Portable
+          path: dist/LumIA-Portatil.zip
           if-no-files-found: error
           retention-days: 14
