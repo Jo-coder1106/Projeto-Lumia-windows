@@ -13,6 +13,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -20,6 +22,7 @@ jobs:
       - name: Extract Java source package
         shell: pwsh
         run: |
+          git show ec6619267e560cbd65d345d07358ac96a6c3ddba:lumia-java-source.zip > lumia-java-source.zip
           Expand-Archive -Path lumia-java-source.zip -DestinationPath source -Force
           $root = Get-ChildItem source -Directory | Select-Object -First 1
           if (-not $root) { throw "Pasta fonte não encontrada no ZIP." }
